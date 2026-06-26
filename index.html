@@ -76,13 +76,42 @@
     box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:90vw;text-align:center;}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
   .loading{color:var(--muted);text-align:center;padding:40px 0;}
+  .hdr-right{display:flex;align-items:center;gap:10px;}
+  .lockbtn{flex:0 0 auto;min-height:0;width:auto;padding:7px 12px;font-size:13px;
+    background:var(--card2);color:var(--muted);border-radius:11px;font-weight:600;}
+  .lockwrap{display:flex;align-items:center;justify-content:center;min-height:70vh;}
+  .lockcard{background:var(--card);border:1px solid var(--line);border-radius:20px;
+    padding:30px 22px;width:100%;max-width:320px;text-align:center;}
+  .lockicon{font-size:40px;margin-bottom:6px;}
+  .locktitle{font-size:17px;font-weight:650;margin-bottom:18px;}
+  #pinInput{width:100%;text-align:center;letter-spacing:8px;font-size:24px;
+    background:#0c120e;border:1px solid var(--line);color:var(--text);
+    border-radius:13px;padding:14px;margin-bottom:14px;}
+  .pinerr{color:#ff9b9b;font-size:14px;min-height:20px;margin-top:12px;}
 </style>
 </head>
 <body>
 <header>
-  <h1>🌱 Daily Logger <span class="status" id="status"></span></h1>
+  <h1><span>🌱 Daily Logger</span>
+    <span class="hdr-right">
+      <span class="status" id="status"></span>
+      <button id="lockBtn" class="lockbtn" style="display:none">🔒 Lock</button>
+    </span>
+  </h1>
   <div class="date" id="dateLine">Loading…</div>
 </header>
+
+<!-- LOCK SCREEN -->
+<div id="lock" class="lockwrap" style="display:none">
+  <div class="lockcard">
+    <div class="lockicon">🔒</div>
+    <div class="locktitle">Enter your PIN</div>
+    <input id="pinInput" type="password" inputmode="numeric" autocomplete="off"
+           placeholder="••••" maxlength="12">
+    <button class="accent big" id="pinBtn" style="width:100%">Unlock</button>
+    <div id="pinErr" class="pinerr"></div>
+  </div>
+</div>
 
 <div id="app" style="display:none">
 
@@ -153,6 +182,11 @@ const CUP = 0.66, HALF = 0.33;
 const SUPPS = ['Omega-3','Cal-Mag (lunch)','Cal-Mag (dinner)','Psyllium','Creatine','Kiwi'];
 const FOOD_PRESETS = ['Sweet potato','Rice','Chicken','Eggs','Protein shake','Kiwi (2)','Banana','Rice cake + PB'];
 
+// Login: your PIN is the account password. PIN_PEPPER is appended only to meet
+// the 6-char minimum — it's public, so security rests on the PIN you type.
+const LOGIN_EMAIL = "itai.leibowitz@gmail.com";
+const PIN_PEPPER  = "food";
+
 /* ---- storage backend: Supabase if configured, else localStorage ---- */
 const online = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
 let sb = null;
@@ -212,20 +246,55 @@ function persist(){
 function parseLog(str){ str=(str||'').trim(); return str ? str.split(' | ') : []; }
 function entriesToStr(arr){ return arr.join(' | '); }
 
-/* ---- boot ---- */
-(async function init(){
+/* ---- boot / auth gate ---- */
+(async function boot(){
   $('dateLine').textContent = prettyDate();
-  try { await initBackend(); } catch(e){ /* fall back to on-device */ }
+  if(!online){ startApp(); return; }                 // on-device mode, no login
+  try { await initBackend(); } catch(e){ /* if backend fails, fall back */ }
+  if(!sb){ startApp(); return; }
+  var sess = null;
+  try { sess = (await sb.auth.getSession()).data.session; } catch(e){}
+  if(sess) startApp(); else showLock();
+})();
+
+function showLock(){
+  $('loading').style.display='none';
+  $('app').style.display='none';
+  $('lock').style.display='flex';
+  var inp=$('pinInput'), btn=$('pinBtn');
+  btn.onclick=unlock;
+  inp.onkeydown=function(e){ if(e.key==='Enter') unlock(); };
+  inp.focus();
+}
+async function unlock(){
+  var inp=$('pinInput'), btn=$('pinBtn'); var pin=(inp.value||'').trim();
+  if(!pin) return;
+  btn.disabled=true; $('pinErr').textContent='';
+  try{
+    var r = await sb.auth.signInWithPassword({ email: LOGIN_EMAIL, password: pin + PIN_PEPPER });
+    if(r.error){ $('pinErr').textContent='Wrong PIN — try again'; inp.value=''; btn.disabled=false; inp.focus(); return; }
+  }catch(e){ $('pinErr').textContent='Error: '+(e.message||e); btn.disabled=false; return; }
+  btn.disabled=false;
+  startApp();
+}
+
+async function startApp(){
   try { STATE = await Store.load(todayStr()); }
-  catch(e){ $('loading').textContent = 'Could not load: '+e.message; return; }
+  catch(e){ $('loading').style.display='block'; $('loading').textContent='Could not load: '+e.message; return; }
   STATE.date = todayStr();
   STATE.water_l = Number(STATE.water_l)||0;
   STATE.food_log = STATE.food_log || '';
   STATE.supps = STATE.supps || '';
 
+  $('lock').style.display='none';
   $('loading').style.display='none';
   $('app').style.display='block';
   if(!online) $('offlineBanner').style.display='block';
+
+  if(sb){
+    var lb=$('lockBtn'); lb.style.display='';
+    lb.onclick=async function(){ try{ await sb.auth.signOut(); }catch(e){} location.reload(); };
+  }
 
   renderWater();
   renderPresets();
@@ -237,7 +306,7 @@ function entriesToStr(arr){ return arr.join(' | '); }
   wireWater();
   $('btnLogFood').onclick = logFreeFood;
   $('foodText').addEventListener('keydown', e=>{ if(e.key==='Enter') logFreeFood(); });
-})();
+}
 
 /* ---- water ---- */
 const cupsOf = L => Math.round(L/CUP*10)/10;
