@@ -1,0 +1,9 @@
+{
+  "name": "Daily Logger",
+  "short_name": "Logger",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0f1411",
+  "theme_color": "#0f1411",
+  "icons": []
+}
